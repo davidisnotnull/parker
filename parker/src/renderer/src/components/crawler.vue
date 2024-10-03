@@ -13,6 +13,10 @@
       </div>
     </div>
 
+    <div class="crawling" v-if="loading">
+      <p>Crawling...analysed {{ urlsCrawled }} links</p>
+    </div>
+
     <table class="table results" v-if="showResults">
       <thead>
         <tr>
@@ -25,7 +29,7 @@
         </tr>
       </tbody>
     </table>
-  </div>  
+  </div>
 </template>
 
 <script>
@@ -35,7 +39,11 @@ export default {
     return {
       url: '',
       urls: [],
+      crawlDepth: 0,
+      visitedUrls: new Set(),
+      uniqueUrls: new Set(),
       loading: false,
+      urlsCrawled: 0,
       showResults: false
     }
   },
@@ -47,93 +55,79 @@ export default {
   beforeUnmount() {},
   watch: {},
   methods: {
-    startCrawl() {
+    startCrawl: async function() {
       this.showResults = false
       this.loading = true
+      this.uniqueUrls.add(this.url)
 
-      crawlWebsite(this.url).then((urls) => {
-        this.urls = urls
-        this.loading = false
-        this.showResults = true
-      })
-    }
-  }
-}
-
-async function crawlWebsite(baseUrl) {
-  const visitedUrls = new Set()
-  const uniqueUrls = new Set()
-  let depth = 0
-
-  uniqueUrls.add(url)
-
-  async function crawl(url) {
-    // Check if URL has already been visited
-    if (visitedUrls.has(url)) {
-      return
-    }
-
-    try {
-      console.log(`Crawling ${url}`)
-
-      let html = await window.electronAPI.fetchViaProxy(url)
-
-      // Mark the URL as visited
-      visitedUrls.add(url)
-
-      // Parse the HTML using DOMParser
-      let parser = new DOMParser()
-      let doc = parser.parseFromString(html, 'text/html')
-
-      let links = []
-      let anchorElements = doc.querySelectorAll('a[href]')
-
-      anchorElements.forEach((element) => {
-        let href = element.getAttribute('href')
-
-        if (!href) {
-          return
-        }
-
-        // Check for non-URLs
-        if (
-          href.indexOf('#') > -1 ||
-          href.indexOf('javascript:') > -1 ||
-          href.indexOf('mailto:') > -1 ||
-          href.indexOf('tel:') > -1 ||
-          href.indexOf('data:') > -1 ||
-          href.indexOf('file:') > -1 ||
-          href.indexOf('ftp:') > -1 ||
-          href.indexOf('?') > -1
-        ) {
-          return
-        }
-
-        // Resolve the href against the base URL
-        href = new URL(href, url).href // Use 'url' instead of 'baseUrl'
-
-        // Check if the URL has already been visited
-        if (visitedUrls.has(href)) {
-          return
-        }
-
-        if (href.startsWith(baseUrl)) {
-          uniqueUrls.add(href)
-          links.push(href)
-        }
-      })
-
-      // Recursively crawl the discovered links
-      for (const link of links) {
-        await crawl(link, depth + 1)
+      await this.crawl(this.url, this.crawlDepth)
+      console.log(`Number of URLs captured - ${this.urlsCrawled}`)
+      this.urls = Array.from(this.uniqueUrls)
+      
+      this.showResults = true
+      this.loading = false
+    },
+    crawl: async function (url) {
+      if (this.visitedUrls.has(url)) {
+        return
       }
-    } catch (error) {
-      console.error(`Error crawling ${url}: ${error.message}`)
+
+      try {
+        let html = await window.electronAPI.fetchViaProxy(url)
+        this.visitedUrls.add(url)
+
+        // Parse the HTML using DOMParser
+        let parser = new DOMParser()
+        let doc = parser.parseFromString(html, 'text/html')
+
+        let links = []
+        let anchorElements = doc.querySelectorAll('a[href]')
+
+        anchorElements.forEach((element) => {
+          let href = element.getAttribute('href')
+
+          if (!href) {
+            return
+          }
+
+          // Check for non-URLs
+          if (
+            href.indexOf('#') > -1 ||
+            href.indexOf('javascript:') > -1 ||
+            href.indexOf('mailto:') > -1 ||
+            href.indexOf('tel:') > -1 ||
+            href.indexOf('data:') > -1 ||
+            href.indexOf('file:') > -1 ||
+            href.indexOf('ftp:') > -1 ||
+            href.indexOf('?') > -1
+          ) {
+            return
+          }
+
+          // Resolve the href against the base URL
+          href = new URL(href, url).href // Use 'url' instead of 'baseUrl'
+
+          // Check if the URL has already been visited
+          if (this.visitedUrls.has(href)) {
+            return
+          }
+
+          if (href.startsWith(this.url)) {
+            this.urlsCrawled++
+            this.uniqueUrls.add(href)
+            links.push(href)
+          }
+        })
+
+        // Recursively crawl the discovered links
+        for (const link of links) {
+          await this.crawl(link, this.crawlDepth + 1)
+        }
+      } catch (error) {
+        console.error(`Error crawling ${url}: ${error.message}`)
+      }
     }
   }
-
-  await crawl(baseUrl, depth)
-  console.log(`Number of URLs captured - ${uniqueUrls.size}`)
-  return Array.from(uniqueUrls)
 }
+
 </script>
